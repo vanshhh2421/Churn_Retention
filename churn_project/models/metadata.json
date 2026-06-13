@@ -1,0 +1,74 @@
+{
+  "model_name": "Logistic Regression",
+  "best_params": {
+    "C": 0.1
+  },
+  "raw_features": [
+    "tenure_months",
+    "monthly_charges",
+    "total_purchases",
+    "avg_order_value",
+    "num_support_tickets",
+    "days_since_last_purchase",
+    "is_premium_member",
+    "num_returns",
+    "app_sessions_per_week",
+    "email_open_rate",
+    "discount_usage_rate"
+  ],
+  "engineered_features": [
+    "purchase_frequency",
+    "support_ticket_rate",
+    "return_rate",
+    "recency_ratio",
+    "engagement_score"
+  ],
+  "all_features": [
+    "tenure_months",
+    "monthly_charges",
+    "total_purchases",
+    "avg_order_value",
+    "num_support_tickets",
+    "days_since_last_purchase",
+    "is_premium_member",
+    "num_returns",
+    "app_sessions_per_week",
+    "email_open_rate",
+    "discount_usage_rate",
+    "purchase_frequency",
+    "support_ticket_rate",
+    "return_rate",
+    "recency_ratio",
+    "engagement_score"
+  ],
+  "baseline_metrics": {
+    "accuracy": 0.825,
+    "precision": 0.7096774193548387,
+    "recall": 0.16966580976863754,
+    "f1_score": 0.27385892116182575,
+    "roc_auc": 0.7989736372209695
+  },
+  "final_metrics": {
+    "accuracy": 0.7035,
+    "precision": 0.371536523929471,
+    "recall": 0.7583547557840618,
+    "f1_score": 0.4987320371935757,
+    "roc_auc": 0.7991970370795893
+  },
+  "cv_results": {
+    "Logistic Regression": {
+      "mean_auc": 0.7532307668601923,
+      "std_auc": 0.008553425336623632
+    },
+    "Random Forest": {
+      "mean_auc": 0.7215643570315997,
+      "std_auc": 0.009888823767146306
+    },
+    "Gradient Boosting": {
+      "mean_auc": 0.7382045482546478,
+      "std_auc": 0.007951849194341302
+    }
+  },
+  "dataset_size": 10000,
+  "churn_rate": 0.1943
+}
