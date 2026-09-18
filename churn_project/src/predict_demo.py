@@ -1,60 +1,84 @@
 """
 predict_demo.py
 -----------------
-Standalone demo script that loads the trained model and scaler and
-runs predictions on a few example customers. Useful for quickly
-verifying the model works without spinning up the Flask server.
+Standalone CLI script for rapid local testing using churn.csv schema.
 """
 
 import json
+from pathlib import Path
 import joblib
+import pandas as pd
 import numpy as np
 
-MODEL_PATH = "/home/claude/churn_project/models/churn_model.pkl"
-SCALER_PATH = "/home/claude/churn_project/models/scaler.pkl"
-METADATA_PATH = "/home/claude/churn_project/models/metadata.json"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / "models" / "churn_model.pkl"
+PREPROCESSOR_PATH = BASE_DIR / "models" / "scaler.pkl"
+METADATA_PATH = BASE_DIR / "models" / "metadata.json"
+
+if not (MODEL_PATH.exists() and PREPROCESSOR_PATH.exists() and METADATA_PATH.exists()):
+    raise FileNotFoundError("Artifacts missing. Run `python3 src/train.py` first.")
 
 model = joblib.load(MODEL_PATH)
-scaler = joblib.load(SCALER_PATH)
+preprocessor = joblib.load(PREPROCESSOR_PATH)
 with open(METADATA_PATH) as f:
     metadata = json.load(f)
 
-RAW_FEATURES = metadata["raw_features"]
-ALL_FEATURES = metadata["all_features"]
-
-
-def engineer_features(payload):
-    row = {f: float(payload[f]) for f in RAW_FEATURES}
-    row["purchase_frequency"] = row["total_purchases"] / (row["tenure_months"] + 1)
-    row["support_ticket_rate"] = row["num_support_tickets"] / (row["tenure_months"] + 1)
-    row["return_rate"] = row["num_returns"] / (row["total_purchases"] + 1)
-    row["recency_ratio"] = row["days_since_last_purchase"] / (row["tenure_months"] * 30 + 1)
-    row["engagement_score"] = row["app_sessions_per_week"] * row["email_open_rate"]
-    return np.array([[row[f] for f in ALL_FEATURES]])
-
+expected_cols = metadata["numeric_features"] + metadata["categorical_features"]
 
 examples = {
-    "Likely to churn (low engagement, many tickets, inactive)": {
-        "tenure_months": 5, "monthly_charges": 70, "total_purchases": 3,
-        "avg_order_value": 40, "num_support_tickets": 4,
-        "days_since_last_purchase": 60, "is_premium_member": 0,
-        "num_returns": 2, "app_sessions_per_week": 1,
-        "email_open_rate": 0.1, "discount_usage_rate": 0.05,
+    "High Risk Customer": {
+        "age": 44,
+        "gender": "F",
+        "region_category": "Town",
+        "membership_category": "No Membership",
+        "joined_through_referral": "Yes",
+        "preferred_offer_types": "Gift Vouchers/Coupons",
+        "medium_of_operation": "Desktop",
+        "internet_option": "Wi-Fi",
+        "days_since_last_login": 14,
+        "avg_time_spent": 516.16,
+        "avg_transaction_value": 21027.0,
+        "avg_frequency_login_days": 22.0,
+        "points_in_wallet": 500.69,
+        "used_special_discount": "No",
+        "offer_application_preference": "Yes",
+        "past_complaint": "Yes",
+        "complaint_status": "Solved in Follow-up",
+        "feedback": "Poor Website"
     },
-    "Loyal customer (long tenure, premium, engaged)": {
-        "tenure_months": 48, "monthly_charges": 35, "total_purchases": 60,
-        "avg_order_value": 35, "num_support_tickets": 0,
-        "days_since_last_purchase": 2, "is_premium_member": 1,
-        "num_returns": 0, "app_sessions_per_week": 10,
-        "email_open_rate": 0.7, "discount_usage_rate": 0.1,
-    },
+    "Low Risk Customer": {
+        "age": 18,
+        "gender": "F",
+        "region_category": "Village",
+        "membership_category": "Platinum Membership",
+        "joined_through_referral": "No",
+        "preferred_offer_types": "Gift Vouchers/Coupons",
+        "medium_of_operation": "Desktop",
+        "internet_option": "Wi-Fi",
+        "days_since_last_login": 17,
+        "avg_time_spent": 300.63,
+        "avg_transaction_value": 53005.25,
+        "avg_frequency_login_days": 17.0,
+        "points_in_wallet": 781.75,
+        "used_special_discount": "Yes",
+        "offer_application_preference": "Yes",
+        "past_complaint": "No",
+        "complaint_status": "Not Applicable",
+        "feedback": "Products always in Stock"
+    }
 }
 
 for label, payload in examples.items():
-    X = engineer_features(payload)
-    X_scaled = scaler.transform(X)
-    proba = model.predict_proba(X_scaled)[0, 1]
-    pred = model.predict(X_scaled)[0]
+    df = pd.DataFrame([payload])
+    for col in expected_cols:
+        if col not in df.columns:
+            df[col] = np.nan
+    df = df[expected_cols]
+
+    X_trans = preprocessor.transform(df)
+    proba = float(model.predict_proba(X_trans)[0, 1])
+    pred = int(model.predict(X_trans)[0])
     risk = "High" if proba >= 0.6 else "Medium" if proba >= 0.3 else "Low"
-    print(f"\n{label}")
-    print(f"  -> churn_prediction: {pred}, churn_probability: {proba:.3f}, risk_level: {risk}")
+
+    print(f"\n{label}:")
+    print(f"  -> Prediction: {pred} | Probability: {proba:.4f} | Risk Level: {risk}")
