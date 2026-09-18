@@ -1,90 +1,83 @@
 """
 app.py
 -------
-A lightweight Flask REST API that serves real-time churn predictions
-using the trained model and scaler.
-
-Run:
-    python3 app/app.py
-
-Then send a POST request to /predict, e.g.:
-
-curl -X POST http://127.0.0.1:5000/predict \\
-  -H "Content-Type: application/json" \\
-  -d '{
-        "tenure_months": 5,
-        "monthly_charges": 70,
-        "total_purchases": 3,
-        "avg_order_value": 40,
-        "num_support_tickets": 4,
-        "days_since_last_purchase": 60,
-        "is_premium_member": 0,
-        "num_returns": 2,
-        "app_sessions_per_week": 1,
-        "email_open_rate": 0.1,
-        "discount_usage_rate": 0.05
-      }'
+Flask REST API for real-time churn predictions with churn.csv feature support.
 """
 
 import json
+from pathlib import Path
 import joblib
+import pandas as pd
 import numpy as np
 from flask import Flask, request, jsonify
 
-MODEL_PATH = "/home/claude/churn_project/models/churn_model.pkl"
-SCALER_PATH = "/home/claude/churn_project/models/scaler.pkl"
-METADATA_PATH = "/home/claude/churn_project/models/metadata.json"
+BASE_DIR = Path(__file__).resolve().parent.parent
+MODEL_PATH = BASE_DIR / "models" / "churn_model.pkl"
+PREPROCESSOR_PATH = BASE_DIR / "models" / "scaler.pkl"
+METADATA_PATH = BASE_DIR / "models" / "metadata.json"
 
 app = Flask(__name__)
 
-model = joblib.load(MODEL_PATH)
-scaler = joblib.load(SCALER_PATH)
-with open(METADATA_PATH) as f:
-    metadata = json.load(f)
+def load_artifacts():
+    if not (MODEL_PATH.exists() and PREPROCESSOR_PATH.exists() and METADATA_PATH.exists()):
+        return None, None, None
+    model = joblib.load(MODEL_PATH)
+    preprocessor = joblib.load(PREPROCESSOR_PATH)
+    with open(METADATA_PATH) as f:
+        meta = json.load(f)
+    return model, preprocessor, meta
 
-RAW_FEATURES = metadata["raw_features"]
-ALL_FEATURES = metadata["all_features"]
-
-
-def engineer_features(payload):
-    """Compute the same engineered features used during training."""
-    row = {f: float(payload[f]) for f in RAW_FEATURES}
-
-    row["purchase_frequency"] = row["total_purchases"] / (row["tenure_months"] + 1)
-    row["support_ticket_rate"] = row["num_support_tickets"] / (row["tenure_months"] + 1)
-    row["return_rate"] = row["num_returns"] / (row["total_purchases"] + 1)
-    row["recency_ratio"] = row["days_since_last_purchase"] / (row["tenure_months"] * 30 + 1)
-    row["engagement_score"] = row["app_sessions_per_week"] * row["email_open_rate"]
-
-    return np.array([[row[f] for f in ALL_FEATURES]])
-
+model, preprocessor, metadata = load_artifacts()
 
 @app.route("/", methods=["GET"])
 def home():
+    if metadata is None:
+        return jsonify({"status": "Model artifacts missing. Run src/train.py first."}), 503
     return jsonify({
-        "service": "Customer Churn Prediction API",
+        "service": "E-Commerce Customer Churn Prediction API",
         "model": metadata["model_name"],
         "test_roc_auc": metadata["final_metrics"]["roc_auc"],
-        "usage": "POST /predict with a JSON body containing: " + ", ".join(RAW_FEATURES),
+        "usage": "POST /predict with customer JSON payload"
     })
-
 
 @app.route("/predict", methods=["POST"])
 def predict():
-    payload = request.get_json(force=True)
+    if model is None or preprocessor is None:
+        return jsonify({"error": "Model missing. Train model first."}), 500
 
-    missing = [f for f in RAW_FEATURES if f not in payload]
-    if missing:
-        return jsonify({"error": f"Missing fields: {missing}"}), 400
+    payload = request.get_json(silent=True)
+    if not payload or not isinstance(payload, dict):
+        return jsonify({"error": "Invalid JSON request body."}), 400
+
+    num_cols = metadata["numeric_features"]
+    cat_cols = metadata["categorical_features"]
+    expected_cols = num_cols + cat_cols
+
+    # Convert payload dictionary to DataFrame
+    input_df = pd.DataFrame([payload])
+
+    # Clean input data
+    if "avg_frequency_login_days" in input_df.columns:
+        input_df["avg_frequency_login_days"] = pd.to_numeric(input_df["avg_frequency_login_days"], errors="coerce")
+
+    for c in num_cols:
+        if c in input_df.columns:
+            input_df[c] = pd.to_numeric(input_df[c], errors="coerce")
+            input_df[c] = input_df[c].apply(lambda x: np.nan if pd.notnull(x) and x < 0 else x)
+
+    # Ensure all required features are present
+    for col in expected_cols:
+        if col not in input_df.columns:
+            input_df[col] = np.nan
+
+    input_df = input_df[expected_cols]
 
     try:
-        features = engineer_features(payload)
-    except (ValueError, TypeError) as e:
-        return jsonify({"error": f"Invalid input: {e}"}), 400
-
-    features_scaled = scaler.transform(features)
-    churn_proba = float(model.predict_proba(features_scaled)[0, 1])
-    churn_pred = int(model.predict(features_scaled)[0])
+        X_trans = preprocessor.transform(input_df)
+        churn_proba = float(model.predict_proba(X_trans)[0, 1])
+        churn_pred = int(model.predict(X_trans)[0])
+    except Exception as e:
+        return jsonify({"error": f"Prediction error: {str(e)}"}), 400
 
     return jsonify({
         "churn_prediction": churn_pred,
@@ -93,9 +86,8 @@ def predict():
             "High" if churn_proba >= 0.6 else
             "Medium" if churn_proba >= 0.3 else
             "Low"
-        ),
+        )
     })
 
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
